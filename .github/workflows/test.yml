@@ -1,0 +1,62 @@
+name: Test Git Auto Commit
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Fetch all history for proper git operations
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        
+    - name: Make script executable
+      run: chmod +x git-auto-commit.py
+        
+    - name: Basic functionality test
+      run: |
+        # Set up git user for test commits
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        
+        # Create a test file and stage it
+        echo "# Test file" > test_file.md
+        git add test_file.md
+        
+        # Test the script with --setup option
+        python git-auto-commit.py --setup
+        
+        # Verify config file was created
+        if [ ! -f .git-autocommit ]; then
+          echo "Config file was not created"
+          exit 1
+        fi
+        
+        # Test rule-based commit message generation
+        # We'll capture the output but not actually commit
+        OUTPUT=$(python git-auto-commit.py 2>&1 || true)
+        echo "$OUTPUT"
+        
+        # Check if the output contains the expected message about generated commit
+        if ! echo "$OUTPUT" | grep -q "Generated commit message"; then
+          echo "Failed to generate commit message"
+          exit 1
+        fi
+        
+        echo "Basic functionality test passed"

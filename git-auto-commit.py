@@ -35,6 +35,7 @@ def get_config(git_root):
     """Read configuration from .git-autocommit file if it exists."""
     config = {
         'prefix': '',
+        'prefixes': [],
         'max_length': 72,
         'use_ai': False,
         'openai_api_key': '',
@@ -49,6 +50,11 @@ def get_config(git_root):
         if 'autocommit' in parser:
             if 'prefix' in parser['autocommit']:
                 config['prefix'] = parser['autocommit']['prefix']
+            if 'prefixes' in parser['autocommit']:
+                # Parse the comma-separated list of prefixes
+                prefixes_str = parser['autocommit']['prefixes']
+                if prefixes_str:
+                    config['prefixes'] = [p.strip() for p in prefixes_str.split(',')]
             if 'max_length' in parser['autocommit']:
                 config['max_length'] = int(parser['autocommit']['max_length'])
             if 'use_ai' in parser['autocommit']:
@@ -294,6 +300,7 @@ def setup_config():
     config = configparser.ConfigParser()
     config['autocommit'] = {
         'prefix': '',
+        'prefixes': 'feat:, fix:, docs:, style:, refactor:, perf:, test:, build:, ci:, chore:',
         'max_length': '72',
         'use_ai': 'false',
         'openai_api_key': '',
@@ -307,12 +314,38 @@ def setup_config():
     print(f"Created configuration file at {config_file}")
     print("Edit this file to customize the behavior of git-autocommit.")
 
+def select_prefix(config):
+    """Allow the user to select a prefix from the configured list."""
+    if not config['prefixes']:
+        return config['prefix']
+    
+    print("\nSelect a prefix for your commit message:")
+    for i, prefix in enumerate(config['prefixes'], 1):
+        print(f"{i}. {prefix}")
+    print(f"{len(config['prefixes']) + 1}. No prefix")
+    print(f"{len(config['prefixes']) + 2}. Custom prefix")
+    
+    while True:
+        try:
+            choice = int(input("Enter your choice (number): ").strip())
+            if 1 <= choice <= len(config['prefixes']):
+                return config['prefixes'][choice - 1]
+            elif choice == len(config['prefixes']) + 1:
+                return ''
+            elif choice == len(config['prefixes']) + 2:
+                return input("Enter custom prefix: ").strip()
+            else:
+                print("Invalid choice. Please try again.")
+        except ValueError:
+            print("Please enter a number.")
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Git Auto Commit Message Generator')
     parser.add_argument('--setup', action='store_true', help='Setup initial configuration')
     parser.add_argument('--use-ai', action='store_true', help='Use AI to generate commit message')
     parser.add_argument('--conventional', action='store_true', help='Use Conventional Commits format')
+    parser.add_argument('--no-prefix-selection', action='store_true', help='Skip prefix selection')
     args = parser.parse_args()
     
     if args.setup:
@@ -335,11 +368,16 @@ def main():
     # Get staged files
     staged_files = get_staged_files(repo)
     
+    # Allow user to select a prefix if there are prefixes configured and not skipped
+    if config['prefixes'] and not args.no_prefix_selection:
+        selected_prefix = select_prefix(config)
+        config['prefix'] = selected_prefix
+    
     # Generate commit message
     commit_message = generate_commit_message(repo, staged_files, config)
     
     # Perform the commit
-    print(f"Generated commit message: {commit_message}")
+    print(f"\nGenerated commit message: {commit_message}")
     confirm = input("Proceed with this commit message? (y/n/edit): ").strip().lower()
     
     if confirm == 'y':
