@@ -40,7 +40,8 @@ def get_config(git_root):
         'use_ai': False,
         'openai_api_key': '',
         'openai_model': 'gpt-3.5-turbo',
-        'conventional_commits': False
+        'conventional_commits': False,
+        'detailed_by_default': False
     }
     
     config_file = os.path.join(git_root, '.git-autocommit')
@@ -65,6 +66,8 @@ def get_config(git_root):
                 config['openai_model'] = parser['autocommit']['openai_model']
             if 'conventional_commits' in parser['autocommit']:
                 config['conventional_commits'] = parser['autocommit'].getboolean('conventional_commits')
+            if 'detailed_by_default' in parser['autocommit']:
+                config['detailed_by_default'] = parser['autocommit'].getboolean('detailed_by_default')
     
     # Check for environment variable override for API key
     if 'OPENAI_API_KEY' in os.environ:
@@ -226,28 +229,44 @@ def generate_ai_commit_message(repo, staged_files, config):
     
     # Prepare the prompt
     if config['conventional_commits']:
-        system_prompt = """Generate a concise, meaningful git commit message based on the provided diff. 
+        system_prompt = """Generate a concise git commit message based on the provided diff. 
         Follow the Conventional Commits format: <type>[(scope)]: <description>
         
         Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
         
-        Keep the message under 72 characters. Focus on WHAT changed and WHY, not HOW.
-        Don't include obvious things like 'Update file.txt'.
+        IMPORTANT: Keep the message under 100 characters total, including the type prefix.
+        
+        Be specific and descriptive while being concise. Avoid generic terms like "update", "fix", 
+        or "change" without context. Focus on WHAT changed and WHY, not HOW.
         """
     else:
-        system_prompt = """Generate a concise, meaningful git commit message based on the provided diff.
-        Keep the message under 72 characters. Focus on WHAT changed and WHY, not HOW.
-        Don't include obvious things like 'Update file.txt'.
+        system_prompt = """Generate a concise git commit message based on the provided diff.
+        
+        IMPORTANT: Keep the message under 100 characters total.
+        
+        Be specific and descriptive while being concise. Avoid generic terms like "update", "fix", 
+        or "change" without context. Focus on WHAT changed and WHY, not HOW.
         """
     
     try:
+        # Set a consistent character limit for all commit messages
+        char_limit = 100
+        
+        # Ask if user wants a detailed explanation of changes (will be shown separately)
+        detailed = False
+        if config.get('detailed_by_default', False):
+            detailed = input("\nGenerate a detailed explanation of changes? (Y/n): ").strip().lower() != 'n'
+        else:
+            detailed = input("\nGenerate a detailed explanation of changes? (y/N): ").strip().lower() == 'y'
+        
+        # Generate the concise commit message first
         response = client.chat.completions.create(
             model=config['openai_model'],
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Here's the git diff:\n\n{diff}"}
             ],
-            max_tokens=100,
+            max_tokens=100,  # Keep this relatively small for concise messages
             temperature=0.7
         )
         
@@ -257,9 +276,38 @@ def generate_ai_commit_message(repo, staged_files, config):
         if config['prefix'] and not config['conventional_commits']:
             message = f"{config['prefix']} {message}"
         
-        # Truncate if needed
-        if len(message) > config['max_length']:
-            message = message[:config['max_length'] - 3] + "..."
+        # Always ensure the message is under the character limit
+        if len(message) > char_limit:
+            message = message[:char_limit - 3] + "..."
+        
+        # If detailed explanation is requested, generate it separately
+        if detailed:
+            detail_prompt = """Based on the git diff, provide a detailed explanation of the changes.
+            Include:
+            1. WHAT changed in specific terms
+            2. WHY the change was made
+            3. Any important technical details
+            
+            Format your response in markdown with clear sections.
+            """
+            
+            detail_response = client.chat.completions.create(
+                model=config['openai_model'],
+                messages=[
+                    {"role": "system", "content": detail_prompt},
+                    {"role": "user", "content": f"Here's the git diff:\n\n{diff}"}
+                ],
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            details = detail_response.choices[0].message.content.strip()
+            print("\n\nDetailed explanation of changes:")
+            print("==================================")
+            print(details)
+            print("==================================")
+            print("\nThe above detailed explanation will NOT be included in the commit message.")
+            print(f"Your commit message will be: {message}\n")
         
         return message
     except Exception as e:
@@ -305,7 +353,8 @@ def setup_config():
         'use_ai': 'false',
         'openai_api_key': '',
         'openai_model': 'gpt-3.5-turbo',
-        'conventional_commits': 'false'
+        'conventional_commits': 'false',
+        'detailed_by_default': 'false'
     }
     
     with open(config_file, 'w') as f:
@@ -346,6 +395,7 @@ def main():
     parser.add_argument('--use-ai', action='store_true', help='Use AI to generate commit message')
     parser.add_argument('--conventional', action='store_true', help='Use Conventional Commits format')
     parser.add_argument('--no-prefix-selection', action='store_true', help='Skip prefix selection')
+    parser.add_argument('--detailed', action='store_true', help='Generate a detailed AI commit message')
     args = parser.parse_args()
     
     if args.setup:
@@ -364,6 +414,8 @@ def main():
         config['use_ai'] = True
     if args.conventional:
         config['conventional_commits'] = True
+    if args.detailed:
+        config['detailed_by_default'] = True
     
     # Get staged files
     staged_files = get_staged_files(repo)
