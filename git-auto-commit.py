@@ -284,11 +284,9 @@ def generate_ai_commit_message(repo, staged_files, config):
         if detailed:
             detail_prompt = """Based on the git diff, provide a detailed explanation of the changes.
             Include:
-            1. WHAT changed in specific terms
-            2. WHY the change was made
-            3. Any important technical details
+            WHAT changed in specific terms and WHY the change was made anad Any important technical details
             
-            Format your response in markdown with clear sections.
+            Format your response in a single sentence that is under 120 characters
             """
             
             detail_response = client.chat.completions.create(
